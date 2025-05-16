@@ -1,0 +1,13 @@
+SpeechRecognition==3.10.0
+pyttsx3==2.90
+requests==2.31.0
+googletrans==3.1.0a0
+textblob==0.17.1
+google-auth-oauthlib==1.0.0
+google-auth-httplib2==0.1.0
+google-api-python-client==2.86.0
+gTTS==2.3.2
+pygame==2.5.0
+wikipedia==1.4.0
+forex-python==1.8
+pint==0.21 
