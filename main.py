@@ -21,14 +21,16 @@ from gtts import gTTS
 import pygame
 import wikipedia
 import json
-from forex_python.converter import CurrencyRates
 from pint import UnitRegistry
 
 # Initialize UnitRegistry for unit conversions
 ureg = UnitRegistry()
 
+# Exchange Rates API URL
+EXCHANGE_RATES_API = "https://api.exchangerate-api.com/v4/latest/"
+
 # Initialize CurrencyRates for currency conversion
-currency_rates = CurrencyRates()
+# currency_rates = CurrencyRates()
 
 # File to store todo list
 TODO_FILE = 'todo_list.json'
@@ -298,22 +300,26 @@ def listen_for_command(lang='en-in'):
 def parse_conversion_input(text):
     # Common patterns for conversion
     patterns = [
-        r'convert\s+(\d+(?:\.\d+)?)\s+(\w+)\s+to\s+(\w+)',  # convert 5 kilometers to miles
-        r'(\d+(?:\.\d+)?)\s+(\w+)\s+to\s+(\w+)',           # 5 kilometers to miles
-        r'convert\s+(\d+(?:\.\d+)?)\s+(\w+)\s+in\s+(\w+)',  # convert 5 kilometers in miles
+        r'convert\s+(\d+(?:\.\d+)?)\s+(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+\w+)?)',  # convert 5 pounds to rupees
+        r'(\d+(?:\.\d+)?)\s+(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+\w+)?)',           # 5 pounds to rupees
+        r'convert\s+(\d+(?:\.\d+)?)\s+(\w+(?:\s+\w+)?)\s+in\s+(\w+(?:\s+\w+)?)',  # convert 5 pounds in rupees
     ]
     
     for pattern in patterns:
         match = re.search(pattern, text.lower())
         if match:
-            return float(match.group(1)), match.group(2), match.group(3)
+            value = float(match.group(1))
+            from_unit = match.group(2).strip()
+            to_unit = match.group(3).strip()
+            print(f"Parsed conversion: {value} {from_unit} to {to_unit}")
+            return value, from_unit, to_unit
     return None
 
 def convert_currency(amount, from_currency, to_currency):
     try:
         # Clean up currency codes
-        from_currency = from_currency.strip().upper()
-        to_currency = to_currency.strip().upper()
+        from_currency = from_currency.strip().lower()
+        to_currency = to_currency.strip().lower()
         
         # Handle common currency names
         currency_mapping = {
@@ -324,6 +330,7 @@ def convert_currency(amount, from_currency, to_currency):
             'pound': 'GBP',
             'pounds': 'GBP',
             'yen': 'JPY',
+            'yens': 'JPY',
             'rupee': 'INR',
             'rupees': 'INR',
             'yuan': 'CNY',
@@ -332,15 +339,38 @@ def convert_currency(amount, from_currency, to_currency):
             'australian dollar': 'AUD',
             'australian dollars': 'AUD',
             'canadian dollar': 'CAD',
-            'canadian dollars': 'CAD'
+            'canadian dollars': 'CAD',
+            'inr': 'INR',
+            'usd': 'USD',
+            'eur': 'EUR',
+            'gbp': 'GBP',
+            'jpy': 'JPY',
+            'cny': 'CNY',
+            'chf': 'CHF',
+            'aud': 'AUD',
+            'cad': 'CAD'
         }
         
-        from_currency = currency_mapping.get(from_currency.lower(), from_currency)
-        to_currency = currency_mapping.get(to_currency.lower(), to_currency)
+        # Map the currencies to their codes
+        from_code = currency_mapping.get(from_currency, from_currency.upper())
+        to_code = currency_mapping.get(to_currency, to_currency.upper())
         
-        result = currency_rates.convert(from_currency, to_currency, float(amount))
-        return f"{amount} {from_currency} is equal to {result:.2f} {to_currency}"
+        print(f"Converting {amount} from {from_currency} ({from_code}) to {to_currency} ({to_code})")
+        
+        # Get exchange rates from the API
+        response = requests.get(f"{EXCHANGE_RATES_API}{from_code}")
+        if response.status_code == 200:
+            data = response.json()
+            if 'rates' in data and to_code in data['rates']:
+                rate = data['rates'][to_code]
+                result = float(amount) * rate
+                return f"{amount} {from_currency} is equal to {result:.2f} {to_currency}"
+            else:
+                return f"Sorry, I couldn't find the exchange rate for {to_code}"
+        else:
+            return f"Sorry, I couldn't fetch the exchange rates. Error code: {response.status_code}"
     except Exception as e:
+        print(f"Currency conversion error: {str(e)}")
         return f"Sorry, I couldn't convert the currency. Error: {str(e)}"
 
 def convert_units(value, from_unit, to_unit):
@@ -519,13 +549,76 @@ def processCommand(c):
         if conversion:
             value, from_unit, to_unit = conversion
             # Check if it's a currency conversion
-            if any(currency in c.lower() for currency in ['dollar', 'euro', 'pound', 'yen', 'rupee', 'yuan', 'franc']):
+            currency_indicators = [
+                'dollar', 'dollars', 'euro', 'euros', 'pound', 'pounds',
+                'yen', 'yens', 'rupee', 'rupees', 'yuan', 'franc', 'francs',
+                'australian dollar', 'canadian dollar', 'australian dollars',
+                'canadian dollars', 'inr', 'usd', 'eur', 'gbp', 'jpy', 'cny',
+                'chf', 'aud', 'cad'
+            ]
+            if any(indicator in c.lower() for indicator in currency_indicators):
                 result = convert_currency(value, from_unit, to_unit)
             else:
                 result = convert_units(value, from_unit, to_unit)
             speak(result)
         else:
             speak("I couldn't understand the conversion. Please try saying something like 'convert 5 kilometers to miles' or 'convert 100 dollars to euros'")
+    
+    elif "search wikipedia" in c.lower() or "tell me about" in c.lower():
+        # Extract the search query from the command
+        query = c.lower().replace("search wikipedia", "").replace("tell me about", "").strip()
+        if query:
+            result = search_wikipedia(query)
+            speak(result)
+        else:
+            speak("What would you like to know about?")
+            query = listen_for_command()
+            if query:
+                result = search_wikipedia(query)
+                speak(result)
+    
+    elif "add to do" in c.lower():
+        # Extract the todo item from the command
+        todo_item = c.lower().replace("add to do", "").strip()
+        if todo_item:
+            result = add_todo_item(todo_item)
+            speak(result)
+        else:
+            speak("What would you like to add to your todo list?")
+            item = listen_for_command()
+            if item:
+                result = add_todo_item(item)
+                speak(result)
+    
+    elif "list to dos" in c.lower() or "show to dos" in c.lower():
+        result = list_todo_items()
+        speak(result)
+    
+    elif "complete to do" in c.lower():
+        # Extract the todo number from the command
+        try:
+            number = int(''.join(filter(str.isdigit, c)))
+            result = complete_todo_item(number)
+            speak(result)
+        except ValueError:
+            speak("Which todo item would you like to mark as completed? Please say the number.")
+            index = listen_for_command()
+            if index:
+                result = complete_todo_item(index)
+                speak(result)
+    
+    elif "delete to do" in c.lower():
+        # Extract the todo number from the command
+        try:
+            number = int(''.join(filter(str.isdigit, c)))
+            result = delete_todo_item(number)
+            speak(result)
+        except ValueError:
+            speak("Which todo item would you like to delete? Please say the number.")
+            index = listen_for_command()
+            if index:
+                result = delete_todo_item(index)
+                speak(result)
     
     elif "play" in c.lower():
         # Search for presence of "play" anywhere in the command
@@ -655,14 +748,15 @@ def emotional(emotion):
 if __name__ == "__main__":
     speak("Initialising Jarvis...")
 
-    while True:
-        try:
-            with sr.Microphone() as source:
-                print("Listening for the wake word...")
-                audio = recognizer.listen(source, timeout=5, phrase_time_limit=1)
-            word = recognizer.recognize_google(audio)
-            if word.lower() == "jarvis":
-                speak("Yes")
+    
+    try:
+        with sr.Microphone() as source:
+            print("Listening for the wake word...")
+            audio = recognizer.listen(source, timeout=5, phrase_time_limit=1)
+        word = recognizer.recognize_google(audio)
+        if word.lower() == "jarvis":
+            speak("Yes")
+            while True:
                 with sr.Microphone() as source:
                     print("Jarvis active...")
                     audio = recognizer.listen(source)
@@ -677,5 +771,5 @@ if __name__ == "__main__":
                         emotional(emotion)
                         flag=False
 
-        except Exception as e:
-            print("Error:", e)
+    except Exception as e:
+        print("Error:", e)
