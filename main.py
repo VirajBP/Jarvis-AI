@@ -15,7 +15,7 @@ from gtts import gTTS
 import pygame
 import wikipedia
 from pint import UnitRegistry
-from get_language_code import get_language_code
+from get_language_code import get_language_code, translate_text
 from convert_currency import convert_currency
 from convert_units import convert_units
 from todo_tasks import load_todo_list, save_todo_list, add_todo_item, list_todo_items, complete_todo_item, delete_todo_item
@@ -67,17 +67,6 @@ def detect_emotion(text):
         return "sad"
     else:
         return "neutral"
-
-def translate_text(text, target_language):
-    try:
-        translator = Translator()
-        translation = translator.translate(text, dest=target_language)
-        print(f"\nOriginal text: {text}")
-        print(f"Translated text ({target_language}): {translation.text}")
-        return translation.text
-    except Exception as e:
-        print(f"Translation error: {str(e)}")
-        return None
 
 def speak(text, lang='en'):
     if lang == 'en':

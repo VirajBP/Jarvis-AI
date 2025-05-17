@@ -1,3 +1,5 @@
+from googletrans import Translator
+
 def get_language_code(language_name):
     # Dictionary mapping common language names to their codes
     language_codes = {
@@ -39,3 +41,15 @@ def get_language_code(language_name):
         'indonesian': 'id'
     }
     return language_codes.get(language_name.lower(), 'en')
+
+
+def translate_text(text, target_language):
+    try:
+        translator = Translator()
+        translation = translator.translate(text, dest=target_language)
+        print(f"\nOriginal text: {text}")
+        print(f"Translated text ({target_language}): {translation.text}")
+        return translation.text
+    except Exception as e:
+        print(f"Translation error: {str(e)}")
+        return None

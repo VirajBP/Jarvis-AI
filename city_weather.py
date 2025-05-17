@@ -1,8 +1,31 @@
 import requests
 import speech_recognition as sr
-from main import speak
+import pyttsx3
+import io
+import pygame
+import os
+from gtts import gTTS
 
 weather_api_key = "e51128f652e6706d782cbeab29e9564a"
+
+def speak(text, lang='en'):
+    if lang == 'en':
+        # Use pyttsx3 for English
+        engine = pyttsx3.init()
+        engine.say(text)
+        engine.runAndWait()
+    else:
+        # Use gTTS for non-English, but stream it
+        tts = gTTS(text=text, lang=lang)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
+
+        pygame.mixer.init()
+        pygame.mixer.music.load(fp)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            continue
 
 def get_weather(city):
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={weather_api_key}&units=metric"

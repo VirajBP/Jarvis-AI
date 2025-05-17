@@ -6,10 +6,31 @@ import re
 import datetime
 import os
 import speech_recognition as sr
-from main import speak
-
+import pyttsx3
+import pygame
+from gtts import gTTS
+import io
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+def speak(text, lang='en'):
+    if lang == 'en':
+        # Use pyttsx3 for English
+        engine = pyttsx3.init()
+        engine.say(text)
+        engine.runAndWait()
+    else:
+        # Use gTTS for non-English, but stream it
+        tts = gTTS(text=text, lang=lang)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
+
+        pygame.mixer.init()
+        pygame.mixer.music.load(fp)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            continue
 
 def parse_date_time_from_text(event_details):
     date_pattern = r'(\d{1,2})\s*(?:st|nd|rd|th)?\s*(?:of)?\s*(January|February|March|April|May|June|July|August|September|October|November|December)?'
