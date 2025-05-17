@@ -9,191 +9,52 @@ import os
 import io
 from googletrans import Translator
 from textblob import TextBlob  # For Emotion Detection
-from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 import datetime
-import re
 import random
-import difflib
 from gtts import gTTS
 import pygame
 import wikipedia
-import json
 from pint import UnitRegistry
-
-# Initialize UnitRegistry for unit conversions
-ureg = UnitRegistry()
-
-# Exchange Rates API URL
-EXCHANGE_RATES_API = "https://api.exchangerate-api.com/v4/latest/"
-
-# Initialize CurrencyRates for currency conversion
-# currency_rates = CurrencyRates()
-
-# File to store todo list
-TODO_FILE = 'todo_list.json'
-
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+from get_language_code import get_language_code
+from convert_currency import convert_currency
+from convert_units import convert_units
+from todo_tasks import load_todo_list, save_todo_list, add_todo_item, list_todo_items, complete_todo_item, delete_todo_item
+from google_calendar_events import add_event_to_calendar, delete_event_from_calendar, listen_for_event_details, parse_date_time_from_text
+from city_weather import get_weather, listen_for_city
+from parseForUnitConversion import parse_conversion_input
 
 recognizer = sr.Recognizer()
 engine = pyttsx3.init()
 newsapikey = "539da9172744455298bb6c908e6d1652"
 stop_listening = False
 command_queue = queue.Queue()
-weather_api_key = "e51128f652e6706d782cbeab29e9564a"
+
 translator = Translator()  # Initialize translator
 
-def parse_date_time_from_text(event_details):
-    date_pattern = r'(\d{1,2})\s*(?:st|nd|rd|th)?\s*(?:of)?\s*(January|February|March|April|May|June|July|August|September|October|November|December)?'
-    time_pattern = r'(\d{1,2}:\d{2})\s*(AM|PM|a\.m\.|p\.m\.)?'
+def set_windows_reminder(reminder_text, reminder_time):
+    run_time = reminder_time.strftime("%H:%M")
+    task_name = f"JarvisVoiceReminder_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}_{random.randint(1000,9999)}"
 
-    date_match = re.search(date_pattern, event_details, re.IGNORECASE)
-    time_match = re.search(time_pattern, event_details, re.IGNORECASE)
+    script_dir = os.path.expanduser("~\\JarvisReminders")
+    os.makedirs(script_dir, exist_ok=True)
+    py_path = os.path.join(script_dir, f"{task_name}.py")
 
-    if date_match:
-        day = int(date_match.group(1))
-        month_str = date_match.group(2)
-        if month_str:
-            month = datetime.datetime.strptime(month_str, '%B').month
-        else:
-            month = datetime.datetime.now().month  # Default to current month if not specified
-    else:
-        day = datetime.datetime.now().day
-        month = datetime.datetime.now().month
+    with open(py_path, "w") as py_file:
+        py_file.write(f'''import pyttsx3, os
+engine = pyttsx3.init()
+engine.say("{reminder_text}")
+engine.runAndWait()
+os.remove(__file__)
+''')
 
-    if time_match:
-        time_str = time_match.group(1)
-        period = time_match.group(2)
-        if period:
-            period = period.lower()  # Convert period to lowercase for consistent comparison
-            hour, minute = map(int, time_str.split(':'))
-            if period == "p.m." and hour < 12:
-                hour += 12
-            elif period == "a.m." and hour == 12:
-                hour = 0
-            time_str = f"{hour:02}:{minute:02}"
-        time = datetime.datetime.strptime(time_str, '%H:%M').time()
-    else:
-        time = datetime.datetime.now().time()  # Default to current time if not specified
+    command = (
+        f'schtasks /Create /SC ONCE /TN "{task_name}" '
+        f'/TR "python \\"{py_path}\\"" '
+        f'/ST {run_time} /F'
+    )
 
-    event_date = datetime.datetime(datetime.datetime.now().year, month, day)
-    event_time = datetime.datetime.combine(event_date, time)
-    return event_time
-
-
-def authorize_google_calendar():
-    creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json')
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-    return creds
-
-
-def add_event_to_calendar(date, summary, description):
-    service = build('calendar', 'v3', credentials=authorize_google_calendar())
-    event = {
-        'summary': summary,
-        'description': description,
-        'start': {
-            'dateTime': date.strftime('%Y-%m-%dT%H:%M:%S'),
-            'timeZone': 'Asia/Kolkata',
-        },
-        'end': {
-            'dateTime': (date + datetime.timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%S'),
-            'timeZone': 'Asia/Kolkata',
-        },
-    }
-    try:
-        event = service.events().insert(calendarId='primary', body=event).execute()
-        speak(f"Event '{summary}' added to your calendar.")
-    except Exception as e:
-        speak(f"Failed to add event: {str(e)}")
-
-
-def delete_event_from_calendar(date):
-    service = build('calendar', 'v3', credentials=authorize_google_calendar())
-    time_min = date.isoformat() + '+05:30'  # Adding IST offset
-
-    events_result = service.events().list(calendarId='primary', timeMin=time_min, singleEvents=True, orderBy='startTime').execute()
-    events = events_result.get('items', [])
-
-    if not events:
-        speak("No events found for that date.")
-        return
-
-    for event in events:
-        start = event['start'].get('dateTime', event['start'].get('date'))
-        if start.startswith(date.isoformat()):
-            try:
-                service.events().delete(calendarId='primary', eventId=event['id']).execute()
-                speak(f"Event '{event['summary']}' deleted from your calendar.")
-                return
-            except Exception as e:
-                speak(f"Failed to delete event: {str(e)}")
-                return
-    speak("No matching events found for that date and time.")
-
-
-def listen_for_event_details():
-    r = sr.Recognizer()
-    with sr.Microphone() as source:
-        print("Listening for event details...")
-        audio = r.listen(source)
-    try:
-        event_details = r.recognize_google(audio)
-        return event_details
-    except sr.UnknownValueError:
-        speak("Sorry, I didn't catch that. Please try again.")
-        return None
-    except sr.RequestError:
-        speak("Sorry, I'm having trouble connecting to the speech service.")
-        return None
-
-
-def get_weather(city):
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={weather_api_key}&units=metric"
-    try:
-        r = requests.get(url)
-        if r.status_code == 200:
-            data = r.json()
-            main = data['weather'][0]['main']
-            description = data['weather'][0]['description']
-            temp = data['main']['temp']
-            weather_info = f"The current weather in {city} is {main} with {description}. The temperature is {temp} degrees Celsius."
-            return weather_info
-        else:
-            print(f"Failed to get weather data. Status code: {r.status_code}, Response: {r.text}")
-            return "Sorry, I couldn't fetch the weather information right now."
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed: {e}")
-        return "Sorry, I couldn't fetch the weather information right now."
-
-
-def listen_for_city():
-    r = sr.Recognizer()
-    with sr.Microphone() as source:
-        speak("Which city do you want to know the weather for?")
-        audio = r.listen(source)
-    try:
-        city = r.recognize_google(audio)
-        return city
-    except sr.UnknownValueError:
-        speak("Sorry, I didn't catch that. Please try again.")
-        return None
-    except sr.RequestError:
-        speak("Sorry, I'm having trouble connecting to the speech service.")
-        return None
-
+    os.system(command)
+    speak(f"Voice reminder set: '{reminder_text}' at {run_time}")
 
 
 def detect_emotion(text):
@@ -206,48 +67,6 @@ def detect_emotion(text):
         return "sad"
     else:
         return "neutral"
-
-def get_language_code(language_name):
-    # Dictionary mapping common language names to their codes
-    language_codes = {
-        # Indian languages
-        'hindi': 'hi',
-        'hindustani': 'hi',
-        'indian': 'hi',
-        'marathi': 'mr',
-        'tamil': 'ta',
-        'telugu': 'te',
-        'bengali': 'bn',
-        'gujarati': 'gu',
-        'kannada': 'kn',
-        'malayalam': 'ml',
-        'punjabi': 'pa',
-        'urdu': 'ur',
-        
-        # International languages
-        'english': 'en',
-        'spanish': 'es',
-        'espanol': 'es',
-        'french': 'fr',
-        'francais': 'fr',
-        'german': 'de',
-        'deutsch': 'de',
-        'chinese': 'zh-cn',
-        'mandarin': 'zh-cn',
-        'japanese': 'ja',
-        'korean': 'ko',
-        'russian': 'ru',
-        'arabic': 'ar',
-        'portuguese': 'pt',
-        'italian': 'it',
-        'dutch': 'nl',
-        'greek': 'el',
-        'turkish': 'tr',
-        'vietnamese': 'vi',
-        'thai': 'th',
-        'indonesian': 'id'
-    }
-    return language_codes.get(language_name.lower(), 'en')
 
 def translate_text(text, target_language):
     try:
@@ -297,172 +116,6 @@ def listen_for_command(lang='en-in'):
             speak("Sorry, I'm having trouble connecting to the speech service.")
             return None
 
-def parse_conversion_input(text):
-    # Common patterns for conversion
-    patterns = [
-        r'convert\s+(\d+(?:\.\d+)?)\s+(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+\w+)?)',  # convert 5 pounds to rupees
-        r'(\d+(?:\.\d+)?)\s+(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+\w+)?)',           # 5 pounds to rupees
-        r'convert\s+(\d+(?:\.\d+)?)\s+(\w+(?:\s+\w+)?)\s+in\s+(\w+(?:\s+\w+)?)',  # convert 5 pounds in rupees
-    ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, text.lower())
-        if match:
-            value = float(match.group(1))
-            from_unit = match.group(2).strip()
-            to_unit = match.group(3).strip()
-            print(f"Parsed conversion: {value} {from_unit} to {to_unit}")
-            return value, from_unit, to_unit
-    return None
-
-def convert_currency(amount, from_currency, to_currency):
-    try:
-        # Clean up currency codes
-        from_currency = from_currency.strip().lower()
-        to_currency = to_currency.strip().lower()
-        
-        # Handle common currency names
-        currency_mapping = {
-            'dollar': 'USD',
-            'dollars': 'USD',
-            'euro': 'EUR',
-            'euros': 'EUR',
-            'pound': 'GBP',
-            'pounds': 'GBP',
-            'yen': 'JPY',
-            'yens': 'JPY',
-            'rupee': 'INR',
-            'rupees': 'INR',
-            'yuan': 'CNY',
-            'franc': 'CHF',
-            'francs': 'CHF',
-            'australian dollar': 'AUD',
-            'australian dollars': 'AUD',
-            'canadian dollar': 'CAD',
-            'canadian dollars': 'CAD',
-            'inr': 'INR',
-            'usd': 'USD',
-            'eur': 'EUR',
-            'gbp': 'GBP',
-            'jpy': 'JPY',
-            'cny': 'CNY',
-            'chf': 'CHF',
-            'aud': 'AUD',
-            'cad': 'CAD'
-        }
-        
-        # Map the currencies to their codes
-        from_code = currency_mapping.get(from_currency, from_currency.upper())
-        to_code = currency_mapping.get(to_currency, to_currency.upper())
-        
-        print(f"Converting {amount} from {from_currency} ({from_code}) to {to_currency} ({to_code})")
-        
-        # Get exchange rates from the API
-        response = requests.get(f"{EXCHANGE_RATES_API}{from_code}")
-        if response.status_code == 200:
-            data = response.json()
-            if 'rates' in data and to_code in data['rates']:
-                rate = data['rates'][to_code]
-                result = float(amount) * rate
-                return f"{amount} {from_currency} is equal to {result:.2f} {to_currency}"
-            else:
-                return f"Sorry, I couldn't find the exchange rate for {to_code}"
-        else:
-            return f"Sorry, I couldn't fetch the exchange rates. Error code: {response.status_code}"
-    except Exception as e:
-        print(f"Currency conversion error: {str(e)}")
-        return f"Sorry, I couldn't convert the currency. Error: {str(e)}"
-
-def convert_units(value, from_unit, to_unit):
-    try:
-        # Clean up unit names
-        from_unit = from_unit.strip().lower()
-        to_unit = to_unit.strip().lower()
-        
-        # Handle common unit names and abbreviations
-        unit_mapping = {
-            # Length
-            'kilometer': 'kilometer',
-            'kilometers': 'kilometer',
-            'km': 'kilometer',
-            'meter': 'meter',
-            'meters': 'meter',
-            'm': 'meter',
-            'centimeter': 'centimeter',
-            'centimeters': 'centimeter',
-            'cm': 'centimeter',
-            'millimeter': 'millimeter',
-            'millimeters': 'millimeter',
-            'mm': 'millimeter',
-            'mile': 'mile',
-            'miles': 'mile',
-            'mi': 'mile',
-            'yard': 'yard',
-            'yards': 'yard',
-            'yd': 'yard',
-            'foot': 'foot',
-            'feet': 'foot',
-            'ft': 'foot',
-            'inch': 'inch',
-            'inches': 'inch',
-            'in': 'inch',
-            
-            # Weight
-            'kilogram': 'kilogram',
-            'kilograms': 'kilogram',
-            'kg': 'kilogram',
-            'gram': 'gram',
-            'grams': 'gram',
-            'g': 'gram',
-            'pound': 'pound',
-            'pounds': 'pound',
-            'lb': 'pound',
-            'ounce': 'ounce',
-            'ounces': 'ounce',
-            'oz': 'ounce',
-            
-            # Temperature
-            'celsius': 'celsius',
-            'c': 'celsius',
-            'fahrenheit': 'fahrenheit',
-            'f': 'fahrenheit',
-            'kelvin': 'kelvin',
-            'k': 'kelvin',
-            
-            # Volume
-            'liter': 'liter',
-            'liters': 'liter',
-            'l': 'liter',
-            'milliliter': 'milliliter',
-            'milliliters': 'milliliter',
-            'ml': 'milliliter',
-            'gallon': 'gallon',
-            'gallons': 'gallon',
-            'gal': 'gallon',
-            'quart': 'quart',
-            'quarts': 'quart',
-            'qt': 'quart',
-            'pint': 'pint',
-            'pints': 'pint',
-            'pt': 'pint',
-            'cup': 'cup',
-            'cups': 'cup',
-            'fluid ounce': 'fluid_ounce',
-            'fluid ounces': 'fluid_ounce',
-            'fl oz': 'fluid_ounce'
-        }
-        
-        from_unit = unit_mapping.get(from_unit, from_unit)
-        to_unit = unit_mapping.get(to_unit, to_unit)
-        
-        # Convert to pint Quantity
-        quantity = float(value) * ureg(from_unit)
-        # Convert to target unit
-        result = quantity.to(to_unit)
-        return f"{value} {from_unit} is equal to {result.magnitude:.2f} {to_unit}"
-    except Exception as e:
-        return f"Sorry, I couldn't convert the units. Error: {str(e)}"
-
 def search_wikipedia(query):
     try:
         # Search Wikipedia
@@ -475,61 +128,6 @@ def search_wikipedia(query):
         return f"Here's what I found: {summary}"
     except Exception as e:
         return f"Sorry, I couldn't find information about that topic. Error: {str(e)}"
-
-def load_todo_list():
-    if os.path.exists(TODO_FILE):
-        with open(TODO_FILE, 'r') as f:
-            return json.load(f)
-    return []
-
-def save_todo_list(todo_list):
-    with open(TODO_FILE, 'w') as f:
-        json.dump(todo_list, f)
-
-def add_todo_item(item):
-    todo_list = load_todo_list()
-    todo_list.append({
-        'task': item,
-        'completed': False,
-        'created_at': datetime.datetime.now().isoformat()
-    })
-    save_todo_list(todo_list)
-    return f"Added '{item}' to your todo list."
-
-def list_todo_items():
-    todo_list = load_todo_list()
-    if not todo_list:
-        return "Your todo list is empty."
-    
-    response = "Here's your todo list:\n"
-    for i, item in enumerate(todo_list, 1):
-        status = "✓" if item['completed'] else "□"
-        response += f"{i}. [{status}] {item['task']}\n"
-    return response
-
-def complete_todo_item(index):
-    todo_list = load_todo_list()
-    try:
-        index = int(index) - 1
-        if 0 <= index < len(todo_list):
-            todo_list[index]['completed'] = True
-            save_todo_list(todo_list)
-            return f"Marked '{todo_list[index]['task']}' as completed."
-        return "Invalid todo item number."
-    except ValueError:
-        return "Please provide a valid number."
-
-def delete_todo_item(index):
-    todo_list = load_todo_list()
-    try:
-        index = int(index) - 1
-        if 0 <= index < len(todo_list):
-            deleted_item = todo_list.pop(index)
-            save_todo_list(todo_list)
-            return f"Deleted '{deleted_item['task']}' from your todo list."
-        return "Invalid todo item number."
-    except ValueError:
-        return "Please provide a valid number."
 
 def processCommand(c):
     global stop_listening
@@ -728,6 +326,17 @@ def processCommand(c):
                         speak(translated_text, target_code)
                     else:
                         speak("Sorry, I couldn't translate that. Please try again.")
+    elif "remind me" in c.lower() or "set a reminder" in c.lower() or "set reminder" in c.lower() or "set an alarm" in c.lower() or "set an alarm for" in c.lower():
+        speak("Sure, please tell me the reminder text.")
+        reminder_text = listen_for_command()
+        if reminder_text:
+            speak("Please tell me the date and time for the reminder.")
+            date_time = listen_for_event_details()
+            if date_time:
+                date = parse_date_time_from_text(date_time)
+                set_windows_reminder(reminder_text, date)
+            else:
+                speak("Sorry, I couldn't get the date and time. Please try again.")
     elif "shut down" in c.lower() or "shutdown" in c.lower():
         finalCommand=["Sure boss, have a great day ahead !!","Yes boss, I'll take your leave","Farewell for now, remember to relax and unwind","Take care, looking forward for our new chat"]
         speak(finalCommand[random.randint(0,3)])
@@ -767,8 +376,12 @@ if __name__ == "__main__":
                     # Emotion Detection
                     if(flag):
                         emotion = detect_emotion(command)
-                        speak(f"Also I sensed that you're feeling {emotion}.")
-                        emotional(emotion)
+                        if(emotion=="sad" or emotion=="angry" or emotion=="nervous"):
+                            # Speak the detected emotion
+                            # print(f"Detected Emotion: {emotion}")
+                            # if emotion != "neutral":
+                            speak(f"Also I sensed that you're feeling {emotion}.")
+                            emotional(emotion)
                         flag=False
 
     except Exception as e:
