@@ -22,10 +22,11 @@ from todo_tasks import load_todo_list, save_todo_list, add_todo_item, list_todo_
 from google_calendar_events import add_event_to_calendar, delete_event_from_calendar, listen_for_event_details, parse_date_time_from_text
 from city_weather import get_weather, listen_for_city
 from parseForUnitConversion import parse_conversion_input
+from dotenv import news_api_key
 
 recognizer = sr.Recognizer()
 engine = pyttsx3.init()
-newsapikey = "539da9172744455298bb6c908e6d1652"
+
 stop_listening = False
 command_queue = queue.Queue()
 
@@ -219,7 +220,7 @@ def processCommand(c):
 
         print("Song not found in the library.")
     elif "news" in c.lower():
-        r = requests.get("https://newsapi.org/v2/top-headlines?country=us&category=technology&apiKey=539da9172744455298bb6c908e6d1652")
+        r = requests.get(f"https://newsapi.org/v2/top-headlines?country=us&category=technology&apiKey={news_api_key}")
         if r.status_code == 200:
             data = r.json()
             articles = data.get('articles', [])

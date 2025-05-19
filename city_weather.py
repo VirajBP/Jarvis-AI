@@ -5,8 +5,8 @@ import io
 import pygame
 import os
 from gtts import gTTS
+from dotenv import weather_api_key
 
-weather_api_key = "e51128f652e6706d782cbeab29e9564a"
 
 def speak(text, lang='en'):
     if lang == 'en':
